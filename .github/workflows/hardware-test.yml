@@ -1,0 +1,41 @@
+name: Runner Hardware Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: CPU
+        run: |
+          echo "===== CPU ====="
+          nproc
+          lscpu | grep -E "Model name|CPU\(s\)|Architecture"
+
+      - name: RAM
+        run: |
+          echo
+          echo "===== RAM ====="
+          free -h
+
+      - name: Disk
+        run: |
+          echo
+          echo "===== DISK ====="
+          df -h /
+
+      - name: OS
+        run: |
+          echo
+          echo "===== OS ====="
+          uname -a
+          cat /etc/os-release
+
+      - name: Memory test
+        run: |
+          echo
+          echo "===== MEMORY DETAILS ====="
+          cat /proc/meminfo | head -20
