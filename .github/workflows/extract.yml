@@ -1,0 +1,79 @@
+name: EVM Address Extraction Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: "Target EVM chain (bnb, eth, polygon, arbitrum, base)"
+        required: true
+        default: "bnb"
+      start_block:
+        description: "Start Block Number"
+        required: true
+        default: "30000000"
+      end_block:
+        description: "End Block Number"
+        required: true
+        default: "30100000"
+      batch_size:
+        description: "RPC Batch Size"
+        required: true
+        default: "10"
+      concurrency:
+        description: "Parallel Batch Streams"
+        required: true
+        default: "8"
+      release_tag:
+        description: "GitHub Release Tag for upload (Optional)"
+        required: false
+        default: "v2.5-extracted-data"
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Optimized Release Binary
+        run: cargo build --release
+
+      - name: Ensure GitHub Release exists
+        if: "${{ github.event.inputs.release_tag != '' }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.event.inputs.release_tag }}" || \
+          gh release create "${{ github.event.inputs.release_tag }}" \
+            --title "Extracted Data ${{ github.event.inputs.release_tag }}" \
+            --notes "Automated blockchain block extraction data output."
+
+      - name: Run Extractor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./target/release/evm-blockwise-extractor \
+            --chain "${{ github.event.inputs.chain }}" \
+            --start-block "${{ github.event.inputs.start_block }}" \
+            --end-block "${{ github.event.inputs.end_block }}" \
+            --batch-size "${{ github.event.inputs.batch_size }}" \
+            --concurrency "${{ github.event.inputs.concurrency }}" \
+            ${{ github.event.inputs.release_tag != '' && format('--release-tag {0}', github.event.inputs.release_tag) || '' }}
+
+      - name: Upload Artifact (Fallback if release not used)
+        if: "${{ github.event.inputs.release_tag == '' }}"
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-csv-gz
+          path: output/*.csv.gz
+          retention-days: 7
