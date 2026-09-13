@@ -1,0 +1,82 @@
+name: Windows 32GB No-Sleep RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp-session:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Expand Memory to 32GB (Virtual RAM)
+        shell: powershell
+        run: |
+          Write-Host "Configuring 16GB Virtual Memory..."
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name "PagingFiles" -Value "C:\pagefile.sys 16384 16384"
+          $sys = Get-CimInstance Win32_ComputerSystem
+          Set-CimInstance -InputObject $sys -Property @{AutomaticManagedPagefile = $false}
+          Write-Host "Virtual RAM configured successfully."
+
+      - name: Disable Sleep, Screen Off & Idle Timeouts
+        shell: powershell
+        run: |
+          Write-Host "Disabling Sleep, Standby, and Screen Off..."
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change disk-timeout-ac 0
+          powercfg /change standby-timeout-ac 0
+          powercfg /change hibernate-timeout-ac 0
+          powercfg -setacvalueindex SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 0
+          powercfg -setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 0
+          powercfg -SetActive SCHEME_CURRENT
+
+          $tsPolicies = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+          if (!(Test-Path $tsPolicies)) { New-Item -Path $tsPolicies -Force }
+          Set-ItemProperty -Path $tsPolicies -Name "MaxIdleTime" -Value 0
+          Set-ItemProperty -Path $tsPolicies -Name "MaxDisconnectionTime" -Value 0
+          Set-ItemProperty -Path $tsPolicies -Name "KeepAliveEnable" -Value 1
+          Set-ItemProperty -Path $tsPolicies -Name "KeepAliveInterval" -Value 1
+
+      - name: Configure Passwordless RDP & User
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name "LimitBlankPasswordUse" -Value 0
+
+          net user AdminUser "" /add
+          net localgroup Administrators AdminUser /add
+          net localgroup "Remote Desktop Users" AdminUser /add
+
+      - name: Tailscale Setup
+        shell: powershell
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale-setup.exe"
+          Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
+
+          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+          & $tailscalePath up --authkey=$env:TAILSCALE_AUTHKEY --hostname="github-nosleep-win" --accept-routes
+
+      - name: Connection Details
+        shell: powershell
+        run: |
+          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+          $tailscaleIP = & $tailscalePath ip -4
+          Write-Host "=========================================="
+          Write-Host "Tailscale IP : $tailscaleIP"
+          Write-Host "Username     : AdminUser (No Password)"
+          Write-Host "Sleep State  : Disabled (Always Awake)"
+          Write-Host "=========================================="
+
+      - name: Anti-Idle Runner Loop
+        shell: powershell
+        run: |
+          $totalMinutes = 350
+          for ($i = 1; $i -le $totalMinutes; $i++) {
+            Start-Sleep -Seconds 60
+            [Console]::ResetColor()
+            Write-Host "RDP Active & Awake: $i minutes elapsed"
+          }
